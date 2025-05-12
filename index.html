@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="lv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#000000">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <title>P3ČA</title>
+    <link rel="icon" href="data:image/png;base64,ICON_BASE64">
+    <link rel="apple-touch-icon" href="data:image/png;base64,ICON_BASE64">
+    <link rel="manifest" href="data:application/json,{
+        \"name\": \"P3ČA\",
+        \"short_name\": \"P3ČA\",
+        \"start_url\": \".\",
+        \"display\": \"standalone\",
+        \"background_color\": \"#000000\",
+        \"theme_color\": \"#000000\",
+        \"icons\": [
+            {
+                \"src\": \"data:image/png;base64,ICON_BASE64\",
+                \"sizes\": \"512x512\",
+                \"type\": \"image/png\"
+            }
+        ]
+    }">
+    <style>
+        body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; color: white; }
+        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        #intro, #game, #shop, #game-over, #install-prompt { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: none; }
+        #intro { background: black; display: flex; align-items: center; justify-content: center; font-size: 24px; }
+        #game { background: url('data:image/png;base64,BACK_BASE64') center/cover; }
+        #game-over { background: url('data:image/png;base64,BACKH_BASE64') center/cover; }
+        #teacher { position: absolute; bottom: 0; left: 50%; transform: translateX(-50%); width: 200px; }
+        #question { position: absolute; top: 20%; left: 50%; transform: translateX(-50%); font-size: 24px; background: rgba(0,0,0,0.7); padding: 10px; }
+        #answers { position: absolute; bottom: 20%; width: 100%; display: flex; justify-content: center; gap: 10px; }
+        .answer-btn { padding: 10px 20px; font-size: 18px; background: #333; border: none; color: white; cursor: pointer; }
+        .answer-btn:hover { background: #555; }
+        #coins, #progress { position: absolute; top: 10px; font-size: 18px; }
+        #coins { left: 10px; }
+        #progress { right: 10px; }
+        #shop { background: rgba(0,0,0,0.9); display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        #shop button { padding: 15px 30px; font-size: 20px; margin: 10px; }
+        #controls { position: fixed; bottom: 10px; right: 10px; display: flex; gap: 10px; }
+        .control-btn { width: 60px; height: 60px; background: rgba(255,255,255,0.3); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px; }
+        .glitch { animation: glitch 0.1s infinite alternate; }
+        .inversion { filter: invert(100%); }
+        @keyframes glitch {
+            0% { transform: translate(0); }
+            50% { transform: translate(5px, 5px); }
+            100% { transform: translate(-5px, -5px); }
+        }
+        @media (min-width: 768px) { .control-btn { display: none; } }
+    </style>
+</head>
+<body>
+    <div id="install-prompt">Lūdzu, pievienojiet lietotni sākuma ekrānam!</div>
+    <div id="intro">By hexwound</div>
+    <canvas id="canvas"></canvas>
+    <div id="game">
+        <img id="teacher" src="data:image/png;base64,PECA_BASE64" alt="Maruta Pēča">
+        <div id="question"></div>
+        <div id="answers"></div>
+        <div id="coins">Monētas: 0</div>
+        <div id="progress">0/3</div>
+    </div>
+    <div id="shop">
+        <h1>Veikals</h1>
+        <button onclick="buySkip()">Pārlēkt uzdevumu (100 monētas, 30 sekundes)</button>
+        <button onclick="resumeGame()">Turpināt</button>
+    </div>
+    <div id="game-over"></div>
+    <div id="controls">
+        <div class="control-btn" ontouchstart="movePlayer('up')" ontouchend="stopPlayer()">↑</div>
+        <div class="control-btn" ontouchstart="movePlayer('left')" ontouchend="stopPlayer()">←</div>
+        <div class="control-btn" ontouchstart="movePlayer('right')" ontouchend="stopPlayer()">→</div>
+        <div class="control-btn" ontouchstart="movePlayer('down')" ontouchend="stopPlayer()">↓</div>
+    </div>
+    <audio id="wrongH" src="data:audio/mp3;base64,WRONGH_BASE64"></audio>
+    <audio id="horror" src="data:audio/mp3;base64,HORROR_BASE64"></audio>
+    <script>
+        // PWA проверка
+        window.addEventListener('load', () => {
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register('data:application/javascript,navigator.serviceWorker.controller.postMessage("sw");');
+            }
+            if (!window.matchMedia('(display-mode: standalone)').matches) {
+                document.getElementById('install-prompt').style.display = 'block';
+                return;
+            }
+            document.getElementById('install-prompt').style.display = 'none';
+            startIntro();
+        });
+
+        // Ресурсы (замените base64 на реальные)
+        const assets = {
+            peca: 'data:image/png;base64,PECA_BASE64',
+            pecah: 'data:image/png;base64,PECAH_BASE64',
+            wrongH: document.getElementById('wrongH'),
+            horror: document.getElementById('horror')
+        };
+
+        // Игровые переменные
+        let level = 1, coins = 0, correct = 0, totalQuestions = [3, 3, 5, 9], currentQuestion = 0;
+        let gameState = 'intro', player = { x: 50, y: 50, speed: 5 }, obstacles = [];
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        // Вопросы
+        const questions = {
+            1: [
+                { q: '2 + 3 = ?', a: 5, options: [5, 6, 7, 8] },
+                { q: '5 - 2 = ?', a: 3, options: [3, 2, 4, 5] },
+                { q: '4 × 2 = ?', a: 8, options: [8, 6, 10, 12] }
+            ],
+            2: [
+                { q: '12 + 8 = ?', a: 20, options: [20, 18, 22, 24] },
+                { q: '15 - 7 = ?', a: 8, options: [8, 7, 9, 10] },
+                { q: '6 × 3 = ?', a: 18, options: [18, 12, 15, 21] }
+            ],
+            3: [
+                { q: '25 + 17 = ?', a: 42, options: [42, 40, 44, 46] },
+                { q: '30 - 12 = ?', a: 18, options: [18, 16, 20, 22] },
+                { q: '8 × 4 = ?', a: 32, options: [32, 28, 36, 40] },
+                { q: '50 ÷ 5 = ?', a: 10, options: [10, 8, 12, 15] },
+                { q: '7 + 9 - 4 = ?', a: 12, options: [12, 10, 14, 16] }
+            ],
+            4: [
+                { q: '3 + 5 × 2 = ?', a: 13, options: [13, 16, 10, 20] },
+                { q: '20 - 8 ÷ 2 = ?', a: 16, options: [16, 12, 18, 14] },
+                { q: '6 × 4 - 5 = ?', a: 19, options: [19, 20, 18, 22] },
+                { q: '15 ÷ 3 + 7 = ?', a: 12, options: [12, 10, 14, 15] },
+                { q: '2 × (3 + 4) = ?', a: 14, options: [14, 10, 12, 16] },
+                { q: '9 - 2 + 5 = ?', a: 12, options: [12, 10, 14, 16] },
+                { q: '4 × 5 - 3 = ?', a: 17, options: [17, 15, 18, 20] },
+                { q: '25 ÷ 5 + 6 = ?', a: 11, options: [11, 10, 12, 14] },
+                { q: '(7 × 8 - 4) ÷ 2 = ?', a: 26, options: [26, 24, 28, 30] }
+            ]
+        };
+
+        // Интро
+        function startIntro() {
+            document.getElementById('intro').style.display = 'flex';
+            let flashes = 0;
+            const interval = setInterval(() => {
+                document.body.classList.toggle('inversion');
+                document.getElementById('intro').classList.toggle('glitch');
+                flashes++;
+                if (flashes > 10) {
+                    clearInterval(interval);
+                    document.getElementById('intro').style.display = 'none';
+                    document.body.classList.remove('inversion', 'glitch');
+                    startGame();
+                }
+            }, 200);
+        }
+
+        // Начало игры
+        function startGame() {
+            gameState = 'question';
+            document.getElementById('game').style.display = 'block';
+            showQuestion();
+        }
+
+        // Показ вопроса
+        function showQuestion() {
+            const q = questions[level][currentQuestion];
+            document.getElementById('question').innerText = q.q;
+            document.getElementById('answers').innerHTML = q.options.map(opt => 
+                `<button class="answer-btn" onclick="checkAnswer(${opt})">${opt}</button>`
+            ).join('');
+            document.getElementById('progress').innerText = `${currentQuestion}/${totalQuestions[level - 1]}`;
+            document.getElementById('coins').innerText = `Monētas: ${coins}`;
+        }
+
+        // Проверка ответа
+        function checkAnswer(answer) {
+            const q = questions[level][currentQuestion];
+            if (answer === q.a) {
+                coins += 10;
+                correct++;
+                currentQuestion++;
+                if (currentQuestion >= totalQuestions[level - 1]) {
+                    if (level === 4 && currentQuestion === 9) {
+                        startParkour();
+                    } else {
+                        showShop();
+                    }
+                } else {
+                    showQuestion();
+                }
+            } else {
+                if (level >= 3) {
+                    assets.wrongH.play();
+                    document.body.classList.add('inversion');
+                    document.getElementById('game').style.backgroundImage = `url('data:image/png;base64,BACKH_BASE64')`;
+                    document.getElementById('teacher').src = assets.pecah;
+                    for (let i = 0; i < 10; i++) {
+                        const img = document.createElement('img');
+                        img.src = assets.pecah;
+                        img.style.position = 'absolute';
+                        img.style.left = `${Math.random() * 100}%`;
+                        img.style.top = `${Math.random() * 100}%`;
+                        img.style.width = '100px';
+                        document.getElementById('game').appendChild(img);
+                        setTimeout(() => img.remove(), 500);
+                    }
+                    setTimeout(() => {
+                        document.body.classList.remove('inversion');
+                        document.getElementById('game').style.backgroundImage = `url('data:image/png;base64,BACK_BASE64')`;
+                        document.getElementById('teacher').src = assets.peca;
+                    }, 500);
+                    if (level === 4 && currentQuestion === 8) {
+                        startParkour();
+                    }
+                } else {
+                    document.body.style.background = 'red';
+                    setTimeout(() => document.body.style.background = '', 200);
+                }
+            }
+        }
+
+        // Магазин
+        function showShop() {
+            gameState = 'shop';
+            document.getElementById('game').style.display = 'none';
+            document.getElementById('shop').style.display = 'flex';
+        }
+
+        function buySkip() {
+            if (coins >= 100) {
+                coins -= 100;
+                setTimeout(() => {
+                    currentQuestion++;
+                    if (currentQuestion >= totalQuestions[level - 1]) {
+                        level++;
+                        currentQuestion = 0;
+                        resumeGame();
+                    } else {
+                        resumeGame();
+                    }
+                }, 30000);
+            }
+        }
+
+        function resumeGame() {
+            gameState = 'question';
+            document.getElementById('shop').style.display = 'none';
+            document.getElementById('game').style.display = 'block';
+            if (currentQuestion >= totalQuestions[level - 1]) {
+                level++;
+                currentQuestion = 0;
+            }
+            if (level > 4) {
+                startParkour();
+            } else {
+                showQuestion();
+            }
+        }
+
+        // Паркур
+        function startParkour() {
+            gameState = 'parkour';
+            document.getElementById('game').style.display = 'none';
+            canvas.style.display = 'block';
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            obstacles = Array(20).fill().map(() => ({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                width: 50,
+                height: 50
+            }));
+            gameLoop();
+        }
+
+        // Управление
+        let keys = { w: false, s: false, a: false, d: false };
+        document.addEventListener('keydown', e => {
+            if (e.key === 'w') keys.w = true;
+            if (e.key === 's') keys.s = true;
+            if (e.key === 'a') keys.a = true;
+            if (e.key === 'd') keys.d = true;
+        });
+        document.addEventListener('keyup', e => {
+            if (e.key === 'w') keys.w = false;
+            if (e.key === 's') keys.s = false;
+            if (e.key === 'a') keys.a = false;
+            if (e.key === 'd') keys.d = false;
+        });
+
+        function movePlayer(dir) {
+            if (dir === 'up') keys.w = true;
+            if (dir === 'down') keys.s = true;
+            if (dir === 'left') keys.a = true;
+            if (dir === 'right') keys.d = true;
+        }
+
+        function stopPlayer() {
+            keys.w = keys.s = keys.a = keys.d = false;
+        }
+
+        // Игровой цикл
+        function gameLoop() {
+            if (gameState !== 'parkour') return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = 'red';
+            ctx.fillRect(player.x, player.y, 20, 20);
+            ctx.fillStyle = 'white';
+            obstacles.forEach(o => ctx.fillRect(o.x, o.y, o.width, o.height));
+
+            if (keys.w) player.y -= player.speed;
+            if (keys.s) player.y += player.speed;
+            if (keys.a) player.x -= player.speed;
+            if (keys.d) player.x += player.speed;
+
+            if (player.x < 0) player.x = 0;
+            if (player.x > canvas.width - 20) player.x = canvas.width - 20;
+            if (player.y < 0) player.y = 0;
+            if (player.y > canvas.height - 20) player.y = canvas.height - 20;
+
+            obstacles.forEach(o => {
+                if (player.x < o.x + o.width && player.x + 20 > o.x &&
+                    player.y < o.y + o.height && player.y + 20 > o.y) {
+                    level = 3;
+                    currentQuestion = 0;
+                    canvas.style.display = 'none';
+                    document.getElementById('game').style.display = 'block';
+                    gameState = 'question';
+                    showQuestion();
+                    return;
+                }
+            });
+
+            if (player.y > canvas.height - 50) {
+                endGame();
+            } else {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+
+        // Конец игры
+        function endGame() {
+            gameState = 'game-over';
+            canvas.style.display = 'none';
+            document.getElementById('game-over').style.display = 'block';
+            assets.horror.play();
+            assets.wrongH.play();
+            document.body.classList.add('inversion', 'glitch');
+            const img = document.createElement('img');
+            img.src = assets.pecah;
+            img.style.position = 'absolute';
+            img.style.left = '50%';
+            img.style.top = '50%';
+            img.style.transform = 'translate(-50%, -50%)';
+            img.style.width = '300px';
+            document.getElementById('game-over').appendChild(img);
+            setTimeout(() => {
+                document.getElementById('game-over').innerHTML += '<h1>Error 404</h1>';
+            }, 2000);
+        }
+    </script>
+</body>
+</html>
